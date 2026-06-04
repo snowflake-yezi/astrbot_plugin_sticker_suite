@@ -1,5 +1,5 @@
 name: sticker_suite
-description: 群聊内学习、标记、检索和复用 QQ 表情包，并内置 NapCat/AstrBot 表情探针。
+description: 群聊内学习、标记、检索和复用 QQ 表情包，并内置 NapCat/AstrBot 表情探针。合并自 sticker_memory + sticker_probe。
 author: Claude
-version: 1.0.0
+version: 1.1.0
 repo:

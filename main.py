@@ -36,6 +36,12 @@ from .probe import StickerProbe
 
 
 def _optional_filter_decorator(name: str):
+    """尝试从 filter 取一个可选钩子装饰器。
+
+    AstrBot 不同版本里 filter 暴露的钩子名可能不一样（例如
+    on_decorating_result 在新版才有）。这里在缺失时退化成 no-op，让插件
+    仍可加载；同时记录一条日志，避免用户调试时以为方法没被注册却找不到原因。
+    """
     decorator_factory = getattr(filter, name, None)
     if callable(decorator_factory):
         try:
@@ -43,14 +49,20 @@ def _optional_filter_decorator(name: str):
         except TypeError:
             return decorator_factory
 
+    logger.warning(f"[sticker_suite] filter.{name} not available; decorated method will not be registered.")
+
     def passthrough(func):
         return func
 
     return passthrough
 
 
-class StickerMemoryPlugin(Star):
-    """按群记录 QQ 表情包，并按聊天语境和心情复用。"""
+class StickerSuitePlugin(Star):
+    """sticker_suite：按群学习/检索/复用 QQ 表情包，内置消息结构探针。
+
+    本类只做命令编排和 AstrBot 装饰器注册；纯逻辑（图片识别、常量、探针）
+    放在 constants/image_extract/probe 模块里。
+    """
 
     DEFAULT_COOLDOWN_SECONDS = DEFAULT_COOLDOWN_SECONDS
     MAX_CONTEXTS = MAX_CONTEXTS
@@ -78,7 +90,7 @@ class StickerMemoryPlugin(Star):
         try:
             data = json.loads(self.data_path.read_text(encoding="utf-8"))
         except Exception as exc:
-            logger.warning(f"[sticker_memory] load data failed: {exc}")
+            logger.warning(f"[sticker_suite] load data failed: {exc}")
             return {"groups": {}, "shared": {"stickers": {}}}
         if not isinstance(data, dict):
             return {"groups": {}, "shared": {"stickers": {}}}
@@ -159,7 +171,7 @@ class StickerMemoryPlugin(Star):
     def _extract_images(self, event: AstrMessageEvent) -> list[dict[str, Any]]:
         deduped, total = extract_images(event, self._sticker_key)
         if total and not deduped:
-            logger.info(f"[sticker_memory] ignored weak image-like records: total={total} outline={event.get_message_outline()}")
+            logger.info(f"[sticker_suite] ignored weak image-like records: total={total} outline={event.get_message_outline()}")
         return deduped
 
     def _source_has_identity(self, source: dict[str, str]) -> bool:
@@ -412,7 +424,7 @@ class StickerMemoryPlugin(Star):
             sticker["content_hash"] = content_hash
             sticker["id"] = content_hash[:8].upper()
         except Exception as exc:
-            logger.warning(f"[sticker_memory] cache image failed: {exc}")
+            logger.warning(f"[sticker_suite] cache image failed: {exc}")
 
     def _guess_suffix(self, content_type: str, url: str) -> str:
         lowered_url = url.lower().split("?", 1)[0]
@@ -818,6 +830,9 @@ class StickerMemoryPlugin(Star):
         if not candidates:
             return False, None
         now = self._now()
+        # 测试模式期内绕过冷却，但仍受 follow_enabled 控制。
+        if int(group.get("follow_test_mode_until", 0) or 0) > now:
+            return True, (candidates[0][2], candidates[0][3])
         cooldown = int(group.get("follow_cooldown_seconds", 120) or 120)
         if now - int(group.get("last_follow_sent_at", 0) or 0) < cooldown:
             return False, (candidates[0][2], candidates[0][3])
@@ -1106,8 +1121,10 @@ class StickerMemoryPlugin(Star):
         data = self._load_data()
         group = self._get_group(data, group_key)
         group["auto_tag_enabled"] = True
+        if group.get("auto_tag_mode", "strict") == "off":
+            group["auto_tag_mode"] = "strict"
         self._save_data(data)
-        yield event.plain_result("表情自动标记已开启。")
+        yield event.plain_result("表情自动标记已开启（严格模式）。")
 
     @filter.command("表情自动标记关")
     async def disable_auto_tagging(self, event: AstrMessageEvent):
@@ -1572,7 +1589,7 @@ class StickerMemoryPlugin(Star):
             return
         result = self._get_event_result(event)
         if result is None:
-            logger.info("[sticker_memory] follow skipped: no event result")
+            logger.info("[sticker_suite] follow skipped: no event result")
             return
         data = self._load_data()
         group = self._get_group(data, group_key)
@@ -1583,27 +1600,27 @@ class StickerMemoryPlugin(Star):
             return
         reply_text = self._extract_result_text(result)
         if not reply_text:
-            logger.info("[sticker_memory] follow skipped: empty reply text")
+            logger.info("[sticker_suite] follow skipped: empty reply text")
             return
         should_send, selected = self._should_follow_reply(group, shared, reply_text)
         if not should_send or selected is None:
-            logger.info("[sticker_memory] follow skipped: no candidate or cooldown")
+            logger.info("[sticker_suite] follow skipped: no candidate or cooldown")
             return
         key, sticker = selected
         local_path = str(sticker.get("local_path") or "")
         if not local_path or not Path(local_path).exists():
             return
         if not self._append_image_to_result(result, local_path):
-            logger.warning("[sticker_memory] follow failed: cannot append image to result")
+            logger.warning("[sticker_suite] follow failed: cannot append image to result")
             return
         sticker["send_count"] = int(sticker.get("send_count", 0) or 0) + 1
         group["last_follow_sent_at"] = self._now()
         self._save_data(data)
-        logger.info(f"[sticker_memory] follow appended sticker: key={key}")
+        logger.info(f"[sticker_suite] follow appended sticker: key={key}")
 
     @filter.command("表情探针状态")
     async def probe_status(self, event: AstrMessageEvent):
-        yield event.plain_result("表情探针已内置在 sticker_suite：发送图片/表情后请查看 AstrBot 日志中的 [sticker_probe] 记录。")
+        yield event.plain_result(self.probe.status_text())
 
     @filter.command("表情探针详情")
     async def probe_detail(self, event: AstrMessageEvent):

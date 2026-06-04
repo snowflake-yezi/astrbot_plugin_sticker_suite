@@ -349,3 +349,33 @@ astrbot_plugin_sticker_suite/
 - 自动发送仍受 `表情开`、冷却时间和概率门控影响；手动测试命令 `表情随机`、`表情最近`、`表情发送 编号` 不受自动复用开关影响。
 - 回复跟随受 `表情跟随开` 和 `表情跟随冷却` 控制，和普通自动复用开关相互独立。
 - 测试自动发送时建议使用 `表情测试开`，避免因为概率门控导致误判为没有触发。
+
+## 工程结构
+
+合并自 `astrbot_plugin_sticker_memory` 和 `astrbot_plugin_sticker_probe`，文件分工如下：
+
+```text
+astrbot_plugin_sticker_suite/
+  __init__.py        # 暴露 StickerSuitePlugin
+  main.py            # AstrBot 装饰器注册、命令编排、数据读写
+  constants.py       # 共享常量：图片字段名、强身份字段、情绪词、默认冷却等
+  image_extract.py   # 消息组件/raw message 递归识别为可入库 image 记录
+  probe.py           # 内置 [sticker_probe] 诊断
+  metadata.yaml
+  README.md
+  CLAUDE.md
+```
+
+- 类名是 `StickerSuitePlugin`，日志前缀是 `[sticker_suite]`（探针日志仍是 `[sticker_probe]`）。
+- 旧目录 `astrbot_plugin_sticker_memory` / `astrbot_plugin_sticker_probe` 暂时保留只为回退；**实际运行时只能启用其中一个**，否则会有同名命令冲突。
+- 回复跟随依赖 AstrBot `filter.on_decorating_result`；若运行环境没有该钩子，启动日志会打印一条 `filter.on_decorating_result not available` 警告。
+
+## 已知未完成功能
+
+合并版本仍是开发中状态，下列方向尚未实现：
+
+- 图片内容 OCR / 视觉识别自动标记
+- 同义词权重、概率/随机度策略
+- 表情详情命令（展示自动标签来源）
+- 历史消息批量回扫学习
+
