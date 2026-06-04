@@ -21,6 +21,7 @@ from .constants import (
     MAX_DOWNLOAD_BYTES,
     MOOD_KEYWORDS,
     TAG_LABELS,
+    TAG_SEMANTIC_GROUPS,
     TRIGGER_PROBABILITY_DENOMINATOR,
 )
 from .image_extract import (
@@ -72,6 +73,7 @@ class StickerSuitePlugin(Star):
     IMAGE_IDENTITY_FIELD_NAMES = IMAGE_IDENTITY_FIELD_NAMES
     MOOD_KEYWORDS = MOOD_KEYWORDS
     TAG_LABELS = TAG_LABELS
+    TAG_SEMANTIC_GROUPS = TAG_SEMANTIC_GROUPS
 
     def __init__(self, context: Context):
         super().__init__(context)
@@ -692,6 +694,15 @@ class StickerSuitePlugin(Star):
                     old_score = tag_scores.get(tag, (0, ""))[0]
                     if variant_score > old_score:
                         tag_scores[tag] = (variant_score, reason)
+            # 语义词组：标签家族里任一近义词命中给 6 分，覆盖语义相同但
+            # 字面不重叠的情况（如标签"被欺负"对回复"得寸进尺"）。
+            semantic_group = self.TAG_SEMANTIC_GROUPS.get(tag, [])
+            for word in semantic_group:
+                if word and word in compact:
+                    old_score = tag_scores.get(tag, (0, ""))[0]
+                    if 6 > old_score:
+                        tag_scores[tag] = (6, f"语义:{word}")
+                    break
 
         pools = [(0, group.get("stickers") or {})]
         if group.get("allow_shared", False):
