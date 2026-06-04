@@ -629,6 +629,44 @@ class StickerSuitePlugin(Star):
                     break
         return score
 
+    def _tag_text_variants(self, tag: str) -> list[tuple[str, int, str]]:
+        """生成一个标签的可匹配文本变体，附带分数和命中原因。
+
+        给检索侧用，不参与自动打标。覆盖"标签是'被欺负'但回复里只有'欺负'"
+        这类一字之差的常见情况：
+        - 原标签：10 分
+        - 去常见前缀（被/不/没/小/老）或后缀（吧/啊/啦/呢/了/的）：7 分
+        - 标签 ≥ 3 字时的连续 2/3 字子串：4 分（防过宽，2 字标签不做）
+        """
+        variants: list[tuple[str, int, str]] = []
+        seen: set[str] = set()
+
+        def push(text: str, score: int, reason: str) -> None:
+            if not text or text == tag or text in seen:
+                return
+            seen.add(text)
+            variants.append((text, score, reason))
+
+        variants.append((tag, 10, f"标签:{tag}"))
+        seen.add(tag)
+
+        prefixes = ("被", "不", "没", "小", "老")
+        suffixes = ("吧", "啊", "啦", "呢", "了", "的")
+        for prefix in prefixes:
+            if tag.startswith(prefix) and len(tag) > len(prefix):
+                push(tag[len(prefix):], 7, f"标签去前缀:{tag}")
+        for suffix in suffixes:
+            if tag.endswith(suffix) and len(tag) > len(suffix):
+                push(tag[: -len(suffix)], 7, f"标签去后缀:{tag}")
+
+        if len(tag) >= 3:
+            for size in (3, 2):
+                if len(tag) < size:
+                    continue
+                for index in range(0, len(tag) - size + 1):
+                    push(tag[index : index + size], 4, f"标签子串:{tag}")
+        return variants
+
     def _retrieve_sticker_candidates(self, group: dict[str, Any], shared: dict[str, Any], text: str) -> list[tuple[int, int, str, dict[str, Any], str]]:
         compact = re.sub(r"\s+", "", text)
         if not compact:
@@ -644,11 +682,16 @@ class StickerSuitePlugin(Star):
                     old_score = tag_scores.get(tag, (0, ""))[0]
                     if 8 > old_score:
                         tag_scores[tag] = (8, f"同义词:{word}")
+        # 用标签变体（原标签 / 去前后缀 / 子串）做匹配；
+        # 一字之差（"被欺负" vs "欺负"）现在也能命中。
         for tag in self._all_tags(group, shared if group.get("allow_shared", False) else None):
-            if tag and tag in compact:
-                old_score = tag_scores.get(tag, (0, ""))[0]
-                if 10 > old_score:
-                    tag_scores[tag] = (10, f"标签:{tag}")
+            if not tag:
+                continue
+            for variant, variant_score, reason in self._tag_text_variants(tag):
+                if variant in compact:
+                    old_score = tag_scores.get(tag, (0, ""))[0]
+                    if variant_score > old_score:
+                        tag_scores[tag] = (variant_score, reason)
 
         pools = [(0, group.get("stickers") or {})]
         if group.get("allow_shared", False):
