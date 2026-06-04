@@ -1587,6 +1587,11 @@ class StickerSuitePlugin(Star):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
+        # 跳过命令触发的回复：否则 /表情标记 ... 的响应文本本身就包含被标的标签，
+        # 会让跟随在命令响应上"成功"匹配并消耗冷却，把后续真实对话的命中卡掉。
+        inbound_text = event.get_message_str().strip()
+        if inbound_text.startswith("/") or inbound_text.startswith("表情"):
+            return
         result = self._get_event_result(event)
         if result is None:
             logger.info("[sticker_suite] follow skipped: no event result")
@@ -1604,7 +1609,14 @@ class StickerSuitePlugin(Star):
             return
         should_send, selected = self._should_follow_reply(group, shared, reply_text)
         if not should_send or selected is None:
-            logger.info("[sticker_suite] follow skipped: no candidate or cooldown")
+            # 拆分日志便于排查：到底是没候选，还是冷却没过
+            candidates = self._retrieve_sticker_candidates(group, shared, reply_text)
+            if not candidates:
+                logger.info(f"[sticker_suite] follow skipped: no candidate for reply={reply_text[:40]}")
+            else:
+                now = self._now()
+                remain = int(group.get("follow_cooldown_seconds", 120) or 120) - (now - int(group.get("last_follow_sent_at", 0) or 0))
+                logger.info(f"[sticker_suite] follow skipped: cooldown {remain}s remain, top_candidate={candidates[0][2]}")
             return
         key, sticker = selected
         local_path = str(sticker.get("local_path") or "")
