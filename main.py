@@ -23,6 +23,10 @@ from .constants import (
     TAG_LABELS,
     TAG_SEMANTIC_GROUPS,
     TRIGGER_PROBABILITY_DENOMINATOR,
+    VISION_COOLDOWN_MAX_MINUTES,
+    VISION_COOLDOWN_MIN_MINUTES,
+    VISION_COOLDOWN_MINUTES_DEFAULT,
+    VISION_MODES,
 )
 from .image_extract import (
     extract_images,
@@ -131,6 +135,11 @@ class StickerSuitePlugin(Star):
         group.setdefault("auto_tag_enabled", True)
         group.setdefault("auto_tag_mode", "strict")
         group.setdefault("recent_texts", [])
+        # 识图：默认全关，开关 / 模式 / 冷却 / 最近识图时间
+        group.setdefault("vision_enabled", False)
+        group.setdefault("vision_mode", "auto")
+        group.setdefault("vision_cooldown_minutes", VISION_COOLDOWN_MINUTES_DEFAULT)
+        group.setdefault("last_vision_at", 0)
         group.setdefault("triggers", {})
         group.setdefault("stickers", {})
         return group
@@ -328,17 +337,57 @@ class StickerSuitePlugin(Star):
                 tags = self._append_unique(tags, tag, 3)
         return tags
 
-    def _record_stickers(self, group: dict[str, Any], shared: dict[str, Any], images: list[dict[str, Any]], text: str, sender_id: str, group_key: str) -> bool:
-        if not images:
+    def _vision_cooldown_passed(self, group: dict[str, Any]) -> bool:
+        """识图冷却是否已过。只在 vision_enabled 时有意义。"""
+        minutes = int(group.get("vision_cooldown_minutes", VISION_COOLDOWN_MINUTES_DEFAULT) or VISION_COOLDOWN_MINUTES_DEFAULT)
+        cooldown_seconds = max(VISION_COOLDOWN_MIN_MINUTES, min(VISION_COOLDOWN_MAX_MINUTES, minutes)) * 60
+        return self._now() - int(group.get("last_vision_at", 0) or 0) >= cooldown_seconds
+
+    async def _maybe_run_vision(self, group: dict[str, Any], shared: dict[str, Any], key: str, sticker: dict[str, Any]) -> bool:
+        """识图 hook 占位。后续步骤接 PaddleOCR + 多模态 LLM。
+
+        约定：
+        - 入口由 _record_stickers 在"无上下文且 vision_enabled 且冷却已过"时调用
+        - 实际识图实现返回 (ocr_text, vision_desc)；写入 sticker.ocr_text /
+          sticker.vision_description / contexts；写完后写 group["last_vision_at"]
+        - 返回 True 表示真的跑了一次（不论拿没拿到结果），用来推进冷却
+        - 返回 False 表示完全跳过（识图未启用 / 不支持 / 出错）
+        """
+        if not group.get("vision_enabled", False):
             return False
+        # TODO: 接 vision.py 后在这里调
+        logger.info(f"[sticker_suite] vision placeholder hit: key={key[:8]} mode={group.get('vision_mode')}")
+        return False
+
+    def _record_stickers(self, group: dict[str, Any], shared: dict[str, Any], images: list[dict[str, Any]], text: str, sender_id: str, group_key: str) -> tuple[bool, list[tuple[str, dict[str, Any]]]]:
+        """入库表情。返回 (是否有变更, 需要后续识图的 (key, sticker) 列表)。
+
+        无上下文表情在 vision_enabled 且识图冷却已过时也会被入库，并加入识图
+        队列；冷却未过时直接跳过，不入库。
+        """
+        if not images:
+            return False, []
         stickers = group.setdefault("stickers", {})
         shared_stickers = shared.setdefault("stickers", {})
         now = self._now()
         changed = False
         previous_text = self._previous_text_for_auto_tag(group, sender_id)
+        pending_vision: list[tuple[str, dict[str, Any]]] = []
         for image in images:
             source = self._source_from_image(image)
-            tag_texts = [item for item in [text, previous_text, *self._source_texts_for_auto_tag(source)] if item]
+            source_texts = self._source_texts_for_auto_tag(source)
+            tag_texts = [item for item in [text, previous_text, *source_texts] if item]
+            has_context = bool(tag_texts)
+            # 无上下文表情：只有识图开启且冷却已过才入库；否则跳过
+            if not has_context:
+                if not group.get("vision_enabled", False):
+                    logger.info(f"[sticker_suite] skip ingest: no context, vision disabled (source={source.get('file') or source.get('md5') or '?'})")
+                    continue
+                if not self._vision_cooldown_passed(group):
+                    minutes = int(group.get("vision_cooldown_minutes", VISION_COOLDOWN_MINUTES_DEFAULT) or VISION_COOLDOWN_MINUTES_DEFAULT)
+                    remain = max(0, minutes * 60 - (self._now() - int(group.get("last_vision_at", 0) or 0)))
+                    logger.info(f"[sticker_suite] skip ingest: no context, vision cooldown {remain}s remain")
+                    continue
             tags = self._infer_tags_from_texts_for_sticker(group, shared, tag_texts)
             key = self._find_existing_sticker_key(stickers, source) or self._find_existing_sticker_key(shared_stickers, source) or self._sticker_key(source)
             sticker = stickers.setdefault(
@@ -393,7 +442,10 @@ class StickerSuitePlugin(Star):
                 self._cache_sticker_file(key, shared_sticker)
             self._ensure_sticker_metadata(key, shared_sticker)
             changed = True
-        return changed
+            if not has_context:
+                # 无上下文 + 已通过冷却 → 排队等识图
+                pending_vision.append((key, sticker))
+        return changed, pending_vision
 
     def _cache_sticker_file(self, key: str, sticker: dict[str, Any]) -> None:
         if sticker.get("local_path"):
@@ -1257,6 +1309,146 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"当前群表情重标记完成，共新增标签 {total_added} 个。")
 
+    @filter.command("表情识图开")
+    async def enable_vision(self, event: AstrMessageEvent):
+        group_key = self._get_group_key(event)
+        if group_key is None:
+            return
+        data = self._load_data()
+        group = self._get_group(data, group_key)
+        group["vision_enabled"] = True
+        self._save_data(data)
+        yield event.plain_result(
+            "表情识图已开启。无上下文表情会触发识图（OCR/多模态 LLM），"
+            f"识图后该群进入 {group.get('vision_cooldown_minutes', VISION_COOLDOWN_MINUTES_DEFAULT)} 分钟冷却，"
+            "冷却期内无上下文表情不入库。"
+        )
+
+    @filter.command("表情识图关")
+    async def disable_vision(self, event: AstrMessageEvent):
+        group_key = self._get_group_key(event)
+        if group_key is None:
+            return
+        data = self._load_data()
+        group = self._get_group(data, group_key)
+        group["vision_enabled"] = False
+        self._save_data(data)
+        yield event.plain_result("表情识图已关闭。无上下文表情将不再入库，避免无意义记录。")
+
+    @filter.regex(r"^表情识图模式\s*(ocr|llm|auto)\s*$")
+    async def set_vision_mode(self, event: AstrMessageEvent):
+        group_key = self._get_group_key(event)
+        if group_key is None:
+            return
+        match = re.match(r"^表情识图模式\s*(ocr|llm|auto)\s*$", event.get_message_str().strip())
+        if not match:
+            return
+        mode = match.group(1)
+        if mode not in VISION_MODES:
+            return
+        data = self._load_data()
+        group = self._get_group(data, group_key)
+        group["vision_mode"] = mode
+        self._save_data(data)
+        yield event.plain_result(f"表情识图模式已设置为：{mode}")
+
+    @filter.regex(r"^表情识图冷却\s*(\d+)\s*$")
+    async def set_vision_cooldown(self, event: AstrMessageEvent):
+        group_key = self._get_group_key(event)
+        if group_key is None:
+            return
+        match = re.match(r"^表情识图冷却\s*(\d+)\s*$", event.get_message_str().strip())
+        if not match:
+            return
+        minutes = max(VISION_COOLDOWN_MIN_MINUTES, min(VISION_COOLDOWN_MAX_MINUTES, int(match.group(1))))
+        data = self._load_data()
+        group = self._get_group(data, group_key)
+        group["vision_cooldown_minutes"] = minutes
+        self._save_data(data)
+        yield event.plain_result(f"表情识图冷却已设置为 {minutes} 分钟（范围 {VISION_COOLDOWN_MIN_MINUTES}-{VISION_COOLDOWN_MAX_MINUTES}）。")
+
+    @filter.command("表情识图状态")
+    async def vision_status(self, event: AstrMessageEvent):
+        group_key = self._get_group_key(event)
+        if group_key is None:
+            return
+        data = self._load_data()
+        group = self._get_group(data, group_key)
+        now = self._now()
+        last_at = int(group.get("last_vision_at", 0) or 0)
+        minutes = int(group.get("vision_cooldown_minutes", VISION_COOLDOWN_MINUTES_DEFAULT) or VISION_COOLDOWN_MINUTES_DEFAULT)
+        elapsed = now - last_at if last_at else None
+        if not group.get("vision_enabled", False):
+            cooldown_line = "冷却状态：识图未启用，无上下文表情直接跳过入库。"
+        elif last_at == 0:
+            cooldown_line = f"冷却状态：未启动（识图开启但还没识过任何无上下文表情）。冷却 {minutes} 分钟。"
+        elif elapsed is not None and elapsed >= minutes * 60:
+            cooldown_line = f"冷却状态：已过（距上次识图 {elapsed // 60} 分钟）。下一张无上下文表情可触发。"
+        else:
+            remain = minutes * 60 - elapsed
+            cooldown_line = f"冷却状态：还剩 {remain // 60} 分 {remain % 60} 秒。"
+        # 统计已识图表情数（含 ocr_text 或 vision_description 任一）
+        recognized = sum(
+            1 for sticker in (group.get("stickers") or {}).values()
+            if isinstance(sticker, dict) and (sticker.get("ocr_text") or sticker.get("vision_description"))
+        )
+        lines = [
+            f"识图开关：{'开启' if group.get('vision_enabled', False) else '关闭'}",
+            f"识图模式：{group.get('vision_mode', 'auto')}（ocr/llm/auto）",
+            f"识图冷却：{minutes} 分钟",
+            cooldown_line,
+            f"已识图表情数：{recognized}",
+        ]
+        yield event.plain_result("\n".join(lines))
+
+    @filter.regex(r"^表情重识图\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
+    async def revision_one_sticker(self, event: AstrMessageEvent):
+        group_key = self._get_group_key(event)
+        if group_key is None:
+            return
+        match = re.match(r"^表情重识图\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$", event.get_message_str().strip())
+        if not match:
+            return
+        data = self._load_data()
+        group = self._get_group(data, group_key)
+        shared = self._get_shared(data)
+        selected = self._sticker_by_ref(group, match.group(1), shared)
+        if selected is None:
+            yield event.plain_result("没有找到这个编号或 ID。请先用 表情列表 查看。")
+            return
+        key, sticker = selected
+        # 手动重识图不受冷却约束；但若识图未启用，明确报错
+        if not group.get("vision_enabled", False):
+            yield event.plain_result("识图未启用。先执行 表情识图开 再重识图。")
+            return
+        ran = await self._maybe_run_vision(group, shared, key, sticker)
+        if ran:
+            group["last_vision_at"] = self._now()
+            self._save_data(data)
+            yield event.plain_result(f"表情 {match.group(1)} 重识图完成。")
+        else:
+            yield event.plain_result("识图未生效（可能未配置 OCR/LLM 或调用失败）。请看日志。")
+
+    @filter.command("表情重识图全部")
+    async def revision_all_stickers(self, event: AstrMessageEvent):
+        group_key = self._get_group_key(event)
+        if group_key is None:
+            return
+        data = self._load_data()
+        group = self._get_group(data, group_key)
+        shared = self._get_shared(data)
+        if not group.get("vision_enabled", False):
+            yield event.plain_result("识图未启用。先执行 表情识图开 再重识图。")
+            return
+        ran_count = 0
+        for key, sticker in self._indexed_stickers(group):
+            if await self._maybe_run_vision(group, shared, key, sticker):
+                ran_count += 1
+        if ran_count:
+            group["last_vision_at"] = self._now()
+        self._save_data(data)
+        yield event.plain_result(f"全部重识图完成，处理 {ran_count} 张。")
+
     @filter.regex(r"^表情列表(?:\s+(\d+))?\s*$")
     async def sticker_list(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
@@ -1591,6 +1783,7 @@ class StickerSuitePlugin(Star):
                 f"自动复用：{'开启' if group.get('enabled', False) else '关闭'}",
                 f"自动标记：{'开启' if group.get('auto_tag_enabled', True) else '关闭'}",
                 f"跟随回复：{'开启' if group.get('follow_enabled', False) else '关闭'}",
+                f"识图：{'开启' if group.get('vision_enabled', False) else '关闭'}（模式 {group.get('vision_mode', 'auto')}，冷却 {int(group.get('vision_cooldown_minutes', VISION_COOLDOWN_MINUTES_DEFAULT) or VISION_COOLDOWN_MINUTES_DEFAULT)} 分钟）",
                 f"冷却：{int(group.get('cooldown_seconds', self.DEFAULT_COOLDOWN_SECONDS) or self.DEFAULT_COOLDOWN_SECONDS)}秒",
                 f"跟随冷却：{int(group.get('follow_cooldown_seconds', 120) or 120)}秒",
                 f"当前心情：{group.get('mood', 'neutral')}",
@@ -1708,10 +1901,16 @@ class StickerSuitePlugin(Star):
             return
         images = self._extract_images(event)
         if images:
-            changed = self._record_stickers(group, shared, images, text, str(event.get_sender_id()), group_key)
+            changed, pending_vision = self._record_stickers(group, shared, images, text, str(event.get_sender_id()), group_key)
             if text and not self._should_ignore_text(event, text):
                 self._remember_recent_text(group, text, str(event.get_sender_id()))
                 changed = True
+            # 无上下文表情 → 跑识图（占位调用，后续接 OCR/LLM）
+            for key, sticker in pending_vision:
+                ran = await self._maybe_run_vision(group, shared, key, sticker)
+                if ran:
+                    group["last_vision_at"] = self._now()
+                    changed = True
             if changed:
                 self._save_data(data)
             return
