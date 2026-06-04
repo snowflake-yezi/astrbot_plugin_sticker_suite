@@ -131,6 +131,19 @@ class StickerProbe:
             logger.warning(f"[sticker_probe] log payload failed: {exc}")
         return payload
 
+    def status_text(self) -> str:
+        captured = len(self.recent_events)
+        looks_like_image = sum(1 for event in self.recent_events if event.get("looks_like_image"))
+        latest_outline = ""
+        if self.recent_events:
+            latest_outline = str(self.recent_events[-1].get("event", {}).get("message_outline") or "")
+        return (
+            "表情探针（sticker_suite 内置）\n"
+            f"缓存事件数：{captured}（含图片/表情的：{looks_like_image}）\n"
+            f"最近一条 outline：{latest_outline or '无'}\n"
+            "日志前缀：[sticker_probe]；查看详情：表情探针详情"
+        )
+
     def detail_text(self) -> str:
         if not self.recent_events:
             return "还没有捕获到图片/表情事件。请先在群里发送一张图片或表情包。"
