@@ -140,6 +140,9 @@ class StickerSuitePlugin(Star):
         group.setdefault("vision_mode", "auto")
         group.setdefault("vision_cooldown_minutes", VISION_COOLDOWN_MINUTES_DEFAULT)
         group.setdefault("last_vision_at", 0)
+        # 探针默认关闭：它会记录 raw message 摘要，调试时临时开启即可。
+        group.setdefault("probe_enabled", False)
+        group.setdefault("probe_until", 0)
         group.setdefault("triggers", {})
         group.setdefault("stickers", {})
         return group
@@ -1877,9 +1880,74 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         logger.info(f"[sticker_suite] follow appended sticker: key={key}")
 
+    def _probe_enabled(self, group: dict[str, Any]) -> bool:
+        if not group.get("probe_enabled", False):
+            return False
+        probe_until = int(group.get("probe_until", 0) or 0)
+        if probe_until and probe_until < self._now():
+            group["probe_enabled"] = False
+            group["probe_until"] = 0
+            return False
+        return True
+
+    def _probe_status_text(self, group: dict[str, Any]) -> str:
+        base = self.probe.status_text()
+        probe_until = int(group.get("probe_until", 0) or 0)
+        now = self._now()
+        if self._probe_enabled(group):
+            if probe_until:
+                remain = max(0, probe_until - now)
+                state = f"开启（剩余 {remain // 60} 分 {remain % 60} 秒）"
+            else:
+                state = "开启"
+        else:
+            state = "关闭"
+        return f"探针捕获：{state}\n{base}\n提示：探针默认关闭；用 表情探针开 持续开启，或用 表情探针开 10 临时开启。"
+
+    @filter.regex(r"^(?:表情)?探针开(?:\s+(\d+))?\s*$")
+    async def enable_probe(self, event: AstrMessageEvent):
+        group_key = self._get_group_key(event)
+        if group_key is None:
+            return
+        match = re.match(r"^(?:表情)?探针开(?:\s+(\d+))?\s*$", event.get_message_str().strip())
+        if not match:
+            return
+        data = self._load_data()
+        group = self._get_group(data, group_key)
+        group["probe_enabled"] = True
+        minutes_text = match.group(1)
+        if minutes_text:
+            minutes = max(1, min(1440, int(minutes_text)))
+            group["probe_until"] = self._now() + minutes * 60
+            message = f"表情探针已开启 {minutes} 分钟。期间会捕获事件结构并输出 [sticker_probe] 日志；不建议长期开启。"
+        else:
+            group["probe_until"] = 0
+            message = "表情探针已开启（不自动关闭）。期间会捕获事件结构并输出 [sticker_probe] 日志；调试结束请执行 表情探针关。"
+        self._save_data(data)
+        yield event.plain_result(message)
+
+    @filter.command("表情探针关")
+    async def disable_probe(self, event: AstrMessageEvent):
+        group_key = self._get_group_key(event)
+        if group_key is None:
+            return
+        data = self._load_data()
+        group = self._get_group(data, group_key)
+        group["probe_enabled"] = False
+        group["probe_until"] = 0
+        self._save_data(data)
+        yield event.plain_result("表情探针已关闭。")
+
     @filter.command("表情探针状态")
     async def probe_status(self, event: AstrMessageEvent):
-        yield event.plain_result(self.probe.status_text())
+        group_key = self._get_group_key(event)
+        if group_key is None:
+            return
+        data = self._load_data()
+        group = self._get_group(data, group_key)
+        text = self._probe_status_text(group)
+        self._save_data(data)
+        yield event.plain_result(text)
 
     @filter.command("表情探针详情")
     async def probe_detail(self, event: AstrMessageEvent):
@@ -1896,7 +1964,11 @@ class StickerSuitePlugin(Star):
         group = self._get_group(data, group_key)
         shared = self._get_shared(data)
         text = self._extract_message_text(event)
-        self.probe.capture(event)
+        probe_was_enabled = bool(group.get("probe_enabled", False))
+        if self._probe_enabled(group):
+            self.probe.capture(event)
+        elif probe_was_enabled and not group.get("probe_enabled", False):
+            self._save_data(data)
         if self._is_self_event(event):
             return
         images = self._extract_images(event)
