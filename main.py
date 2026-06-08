@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 import json
@@ -1097,7 +1097,7 @@ class StickerSuitePlugin(Star):
         sticker["send_count"] = int(sticker.get("send_count", 0) or 0) + 1
         group["last_sent_at"] = self._now()
 
-    @filter.command("表情随机")
+    @filter.regex(r"^/?表情随机\s*$")
     async def random_sticker(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1117,7 +1117,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.image_result(local_path)
 
-    @filter.command("表情最近")
+    @filter.regex(r"^/?表情最近\s*$")
     async def recent_sticker(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1134,12 +1134,12 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.image_result(local_path)
 
-    @filter.regex(r"^表情标记\s+(?:(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s+)?(\S+)\s*$")
+    @filter.regex(r"^/?表情标记\s+(?:(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s+)?(\S+)\s*$")
     async def mark_recent_sticker(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情标记\s+(?:(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s+)?(\S+)\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情标记\s+(?:(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s+)?(\S+)\s*$", event.get_message_str().strip())
         if not match:
             return
         index_text, raw_tag = match.groups()
@@ -1165,12 +1165,12 @@ class StickerSuitePlugin(Star):
         target = f"第{index_text}张" if index_text else "最近入库的表情"
         yield event.plain_result(f"已给{target}标记：{tag}。之后消息里包含“{tag}”时可触发。")
 
-    @filter.regex(r"^表情删标\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s+(\S+)\s*$")
+    @filter.regex(r"^/?表情删标\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s+(\S+)\s*$")
     async def remove_sticker_tag(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情删标\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s+(\S+)\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情删标\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s+(\S+)\s*$", event.get_message_str().strip())
         if not match:
             return
         ref, raw_tag = match.groups()
@@ -1197,12 +1197,12 @@ class StickerSuitePlugin(Star):
         else:
             yield event.plain_result(f"已删除表情 {ref} 的标签：{tag}")
 
-    @filter.regex(r"^表情清标\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
+    @filter.regex(r"^/?表情清标\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
     async def clear_sticker_tags(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情清标\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情清标\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$", event.get_message_str().strip())
         if not match:
             return
         ref = match.group(1)
@@ -1222,7 +1222,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"已清空表情 {ref} 的标签，共删除 {removed_count} 个。")
 
-    @filter.command("表情自动标记开")
+    @filter.regex(r"^/?表情自动标记开\s*$")
     async def enable_auto_tagging(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1235,7 +1235,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("表情自动标记已开启（严格模式）。")
 
-    @filter.command("表情自动标记关")
+    @filter.regex(r"^/?表情自动标记关\s*$")
     async def disable_auto_tagging(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1246,12 +1246,12 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("表情自动标记已关闭，仍可手动使用 表情标记。")
 
-    @filter.regex(r"^表情自动标记模式\s*(严格|关闭)\s*$")
+    @filter.regex(r"^/?表情自动标记模式\s*(严格|关闭)\s*$")
     async def set_auto_tagging_mode(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情自动标记模式\s*(严格|关闭)\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情自动标记模式\s*(严格|关闭)\s*$", event.get_message_str().strip())
         if not match:
             return
         data = self._load_data()
@@ -1262,7 +1262,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"表情自动标记模式已设置为：{match.group(1)}")
 
-    @filter.command("表情自动标记状态")
+    @filter.regex(r"^/?表情自动标记状态\s*$")
     async def auto_tagging_status(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1278,12 +1278,12 @@ class StickerSuitePlugin(Star):
         ]
         yield event.plain_result("\n".join(lines))
 
-    @filter.regex(r"^表情重标记\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
+    @filter.regex(r"^/?表情重标记\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
     async def retag_sticker(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情重标记\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情重标记\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$", event.get_message_str().strip())
         if not match:
             return
         data = self._load_data()
@@ -1298,7 +1298,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"表情 {match.group(1)} 重标记完成，新增标签 {added} 个。")
 
-    @filter.command("表情重标记全部")
+    @filter.regex(r"^/?表情重标记全部\s*$")
     async def retag_all_stickers(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1312,7 +1312,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"当前群表情重标记完成，共新增标签 {total_added} 个。")
 
-    @filter.command("表情识图开")
+    @filter.regex(r"^/?表情识图开\s*$")
     async def enable_vision(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1327,7 +1327,7 @@ class StickerSuitePlugin(Star):
             "冷却期内无上下文表情不入库。"
         )
 
-    @filter.command("表情识图关")
+    @filter.regex(r"^/?表情识图关\s*$")
     async def disable_vision(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1338,12 +1338,12 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("表情识图已关闭。无上下文表情将不再入库，避免无意义记录。")
 
-    @filter.regex(r"^表情识图模式\s*(ocr|llm|auto)\s*$")
+    @filter.regex(r"^/?表情识图模式\s*(ocr|llm|auto)\s*$")
     async def set_vision_mode(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情识图模式\s*(ocr|llm|auto)\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情识图模式\s*(ocr|llm|auto)\s*$", event.get_message_str().strip())
         if not match:
             return
         mode = match.group(1)
@@ -1355,12 +1355,12 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"表情识图模式已设置为：{mode}")
 
-    @filter.regex(r"^表情识图冷却\s*(\d+)\s*$")
+    @filter.regex(r"^/?表情识图冷却\s*(\d+)\s*$")
     async def set_vision_cooldown(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情识图冷却\s*(\d+)\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情识图冷却\s*(\d+)\s*$", event.get_message_str().strip())
         if not match:
             return
         minutes = max(VISION_COOLDOWN_MIN_MINUTES, min(VISION_COOLDOWN_MAX_MINUTES, int(match.group(1))))
@@ -1370,7 +1370,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"表情识图冷却已设置为 {minutes} 分钟（范围 {VISION_COOLDOWN_MIN_MINUTES}-{VISION_COOLDOWN_MAX_MINUTES}）。")
 
-    @filter.command("表情识图状态")
+    @filter.regex(r"^/?表情识图状态\s*$")
     async def vision_status(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1404,12 +1404,12 @@ class StickerSuitePlugin(Star):
         ]
         yield event.plain_result("\n".join(lines))
 
-    @filter.regex(r"^表情重识图\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
+    @filter.regex(r"^/?表情重识图\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
     async def revision_one_sticker(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情重识图\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情重识图\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$", event.get_message_str().strip())
         if not match:
             return
         data = self._load_data()
@@ -1432,7 +1432,7 @@ class StickerSuitePlugin(Star):
         else:
             yield event.plain_result("识图未生效（可能未配置 OCR/LLM 或调用失败）。请看日志。")
 
-    @filter.command("表情重识图全部")
+    @filter.regex(r"^/?表情重识图全部\s*$")
     async def revision_all_stickers(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1452,12 +1452,12 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"全部重识图完成，处理 {ran_count} 张。")
 
-    @filter.regex(r"^表情列表(?:\s+(\d+))?\s*$")
+    @filter.regex(r"^/?表情列表(?:\s+(\d+))?\s*$")
     async def sticker_list(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情列表(?:\s+(\d+))?\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情列表(?:\s+(\d+))?\s*$", event.get_message_str().strip())
         page = int(match.group(1)) if match and match.group(1) else 1
         page = max(1, page)
         page_size = 10
@@ -1479,12 +1479,12 @@ class StickerSuitePlugin(Star):
         lines.append("用法：表情发送 编号/#ID｜表情标记 编号/#ID 标签｜表情删标 编号/#ID 标签｜表情清标 编号/#ID｜表情删除 编号/#ID")
         yield event.plain_result("\n".join(lines))
 
-    @filter.regex(r"^表情发送\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
+    @filter.regex(r"^/?表情发送\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
     async def send_indexed_sticker(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情发送\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情发送\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$", event.get_message_str().strip())
         if not match:
             return
         data = self._load_data()
@@ -1503,12 +1503,12 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.image_result(local_path)
 
-    @filter.regex(r"^表情删除\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
+    @filter.regex(r"^/?表情删除\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
     async def delete_indexed_sticker(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情删除\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情删除\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$", event.get_message_str().strip())
         if not match:
             return
         data = self._load_data()
@@ -1524,7 +1524,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"已删除当前群表情 {match.group(1)}。")
 
-    @filter.command("表情清理重复")
+    @filter.regex(r"^/?表情清理重复\s*$")
     async def cleanup_duplicate_stickers(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1534,12 +1534,12 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"表情重复清理完成，合并/移除重复记录 {removed} 条。")
 
-    @filter.regex(r"^表情同义词\s+(\S+)\s+(\S+)\s*$")
+    @filter.regex(r"^/?表情同义词\s+(\S+)\s+(\S+)\s*$")
     async def add_sticker_trigger(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情同义词\s+(\S+)\s+(\S+)\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情同义词\s+(\S+)\s+(\S+)\s*$", event.get_message_str().strip())
         if not match:
             return
         tag = self._normalize_tag(match.group(1))
@@ -1555,12 +1555,12 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"已添加同义触发：{word} -> {tag}")
 
-    @filter.regex(r"^表情删同义词\s+(\S+)\s+(\S+)\s*$")
+    @filter.regex(r"^/?表情删同义词\s+(\S+)\s+(\S+)\s*$")
     async def remove_sticker_trigger(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情删同义词\s+(\S+)\s+(\S+)\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情删同义词\s+(\S+)\s+(\S+)\s*$", event.get_message_str().strip())
         if not match:
             return
         tag = self._normalize_tag(match.group(1))
@@ -1581,12 +1581,12 @@ class StickerSuitePlugin(Star):
         else:
             yield event.plain_result(f"已删除同义触发：{word} -> {tag}")
 
-    @filter.regex(r"^表情清同义词\s+(\S+)\s*$")
+    @filter.regex(r"^/?表情清同义词\s+(\S+)\s*$")
     async def clear_sticker_triggers(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情清同义词\s+(\S+)\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情清同义词\s+(\S+)\s*$", event.get_message_str().strip())
         if not match:
             return
         tag = self._normalize_tag(match.group(1))
@@ -1601,7 +1601,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"已清空 {tag} 的同义触发词，共删除 {removed_count} 个。")
 
-    @filter.command("表情同义词列表")
+    @filter.regex(r"^/?表情同义词列表\s*$")
     async def list_sticker_triggers(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1619,7 +1619,7 @@ class StickerSuitePlugin(Star):
         lines.append(f"跨群表情：{'开启' if group.get('allow_shared', False) else '关闭'}")
         yield event.plain_result("\n".join(lines))
 
-    @filter.command("表情标签")
+    @filter.regex(r"^/?表情标签\s*$")
     async def sticker_tags(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1635,7 +1635,7 @@ class StickerSuitePlugin(Star):
         lines.append(f"可发送缓存表情：{cached_count}张")
         yield event.plain_result("\n".join(lines))
 
-    @filter.command("表情跨群开")
+    @filter.regex(r"^/?表情跨群开\s*$")
     async def enable_shared_stickers(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1646,7 +1646,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("跨群表情复用已开启。")
 
-    @filter.command("表情跨群关")
+    @filter.regex(r"^/?表情跨群关\s*$")
     async def disable_shared_stickers(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1657,7 +1657,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("跨群表情复用已关闭，本群只会使用自己学到的表情。")
 
-    @filter.command("表情跟随开")
+    @filter.regex(r"^/?表情跟随开\s*$")
     async def enable_follow_stickers(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1668,7 +1668,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("机器人回复跟随表情已开启。")
 
-    @filter.command("表情跟随关")
+    @filter.regex(r"^/?表情跟随关\s*$")
     async def disable_follow_stickers(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1679,12 +1679,12 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("机器人回复跟随表情已关闭。")
 
-    @filter.regex(r"^表情跟随冷却\s*(\d+)\s*$")
+    @filter.regex(r"^/?表情跟随冷却\s*(\d+)\s*$")
     async def follow_sticker_cooldown(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情跟随冷却\s*(\d+)\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情跟随冷却\s*(\d+)\s*$", event.get_message_str().strip())
         if not match:
             return
         seconds = max(30, int(match.group(1)))
@@ -1694,7 +1694,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(f"表情跟随冷却已设置为 {seconds} 秒。")
 
-    @filter.command("表情跟随测试开")
+    @filter.regex(r"^/?表情跟随测试开\s*$")
     async def enable_follow_test_mode(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1707,7 +1707,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("表情跟随测试模式已开启 10 分钟：跟随开启，冷却 30 秒。")
 
-    @filter.command("表情跟随测试关")
+    @filter.regex(r"^/?表情跟随测试关\s*$")
     async def disable_follow_test_mode(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1718,7 +1718,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("表情跟随测试模式已关闭。")
 
-    @filter.command("表情测试开")
+    @filter.regex(r"^/?表情测试开\s*$")
     async def enable_test_mode(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1731,7 +1731,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("表情测试模式已开启 10 分钟：自动复用开启，冷却 30 秒，触发概率临时提高到 100%。")
 
-    @filter.command("表情测试关")
+    @filter.regex(r"^/?表情测试关\s*$")
     async def disable_test_mode(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1742,7 +1742,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("表情测试模式已关闭。")
 
-    @filter.command("表情开")
+    @filter.regex(r"^/?表情开\s*$")
     async def enable_stickers(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1753,7 +1753,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("表情包自动复用已开启。")
 
-    @filter.command("表情关")
+    @filter.regex(r"^/?表情关\s*$")
     async def disable_stickers(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1764,7 +1764,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("表情包自动复用已关闭，但仍会继续学习表情包。")
 
-    @filter.command("表情库状态")
+    @filter.regex(r"^/?表情库状态\s*$")
     async def sticker_status(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1795,7 +1795,7 @@ class StickerSuitePlugin(Star):
         )
         yield event.plain_result("\n".join(lines))
 
-    @filter.command("表情心情")
+    @filter.regex(r"^/?表情心情\s*$")
     async def sticker_mood(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1804,12 +1804,12 @@ class StickerSuitePlugin(Star):
         group = self._get_group(data, group_key)
         yield event.plain_result(f"当前心情：{group.get('mood', 'neutral')}")
 
-    @filter.regex(r"^表情冷却\s*(\d+)\s*$")
+    @filter.regex(r"^/?表情冷却\s*(\d+)\s*$")
     async def sticker_cooldown(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^表情冷却\s*(\d+)\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?表情冷却\s*(\d+)\s*$", event.get_message_str().strip())
         if not match:
             return
         seconds = max(30, int(match.group(1)))
@@ -1904,12 +1904,12 @@ class StickerSuitePlugin(Star):
             state = "关闭"
         return f"探针捕获：{state}\n{base}\n提示：探针默认关闭；用 表情探针开 持续开启，或用 表情探针开 10 临时开启。"
 
-    @filter.regex(r"^(?:表情)?探针开(?:\s+(\d+))?\s*$")
+    @filter.regex(r"^/?(?:表情)?探针开(?:\s+(\d+))?\s*$")
     async def enable_probe(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
             return
-        match = re.match(r"^(?:表情)?探针开(?:\s+(\d+))?\s*$", event.get_message_str().strip())
+        match = re.match(r"^/?(?:表情)?探针开(?:\s+(\d+))?\s*$", event.get_message_str().strip())
         if not match:
             return
         data = self._load_data()
@@ -1926,7 +1926,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(message)
 
-    @filter.command("表情探针关")
+    @filter.regex(r"^/?(?:表情)?探针关\s*$")
     async def disable_probe(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1938,7 +1938,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result("表情探针已关闭。")
 
-    @filter.command("表情探针状态")
+    @filter.regex(r"^/?(?:表情)?探针状态\s*$")
     async def probe_status(self, event: AstrMessageEvent):
         group_key = self._get_group_key(event)
         if group_key is None:
@@ -1949,7 +1949,7 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         yield event.plain_result(text)
 
-    @filter.command("表情探针详情")
+    @filter.regex(r"^/?(?:表情)?探针详情\s*$")
     async def probe_detail(self, event: AstrMessageEvent):
         yield event.plain_result(self.probe.detail_text())
 
