@@ -27,6 +27,7 @@ from .constants import (
     VISION_COOLDOWN_MIN_MINUTES,
     VISION_COOLDOWN_MINUTES_DEFAULT,
     VISION_MODES,
+    VISION_TIMEOUT_SECONDS,
 )
 from .image_extract import (
     extract_images,
@@ -38,6 +39,7 @@ from .image_extract import (
     source_has_identity,
 )
 from .probe import StickerProbe
+from .vision import run_ocr
 
 
 def _optional_filter_decorator(name: str):
@@ -347,20 +349,54 @@ class StickerSuitePlugin(Star):
         return self._now() - int(group.get("last_vision_at", 0) or 0) >= cooldown_seconds
 
     async def _maybe_run_vision(self, group: dict[str, Any], shared: dict[str, Any], key: str, sticker: dict[str, Any]) -> bool:
-        """识图 hook 占位。后续步骤接 PaddleOCR + 多模态 LLM。
-
-        约定：
-        - 入口由 _record_stickers 在"无上下文且 vision_enabled 且冷却已过"时调用
-        - 实际识图实现返回 (ocr_text, vision_desc)；写入 sticker.ocr_text /
-          sticker.vision_description / contexts；写完后写 group["last_vision_at"]
-        - 返回 True 表示真的跑了一次（不论拿没拿到结果），用来推进冷却
-        - 返回 False 表示完全跳过（识图未启用 / 不支持 / 出错）
-        """
+        """对单张表情执行本地 OCR，并把识别文本接入现有标签/上下文体系。"""
         if not group.get("vision_enabled", False):
             return False
-        # TODO: 接 vision.py 后在这里调
-        logger.info(f"[sticker_suite] vision placeholder hit: key={key[:8]} mode={group.get('vision_mode')}")
-        return False
+        mode = str(group.get("vision_mode") or "auto")
+        if mode == "llm":
+            sticker["vision_error"] = "LLM 识图暂未实现"
+            logger.info(f"[sticker_suite] vision skipped: llm mode not implemented key={key[:8]}")
+            return False
+
+        local_path = str(sticker.get("local_path") or "")
+        if not local_path or not Path(local_path).exists():
+            sticker["vision_error"] = "本地缓存不存在，无法识图"
+            logger.info(f"[sticker_suite] vision skipped: no local cache key={key[:8]}")
+            return False
+
+        result = run_ocr(local_path, VISION_TIMEOUT_SECONDS)
+        sticker["vision_engine"] = result.engine
+        if result.error:
+            sticker["vision_error"] = result.error
+            logger.warning(f"[sticker_suite] vision failed: key={key[:8]} error={result.error}")
+            return False
+
+        ocr_text = result.ocr_text.strip()
+        if ocr_text:
+            sticker["ocr_text"] = ocr_text
+            sticker.pop("vision_error", None)
+            sticker["contexts"] = self._append_unique(list(sticker.get("contexts", [])), ocr_text, self.MAX_CONTEXTS)
+            for tag in self._infer_tags_for_sticker(group, shared, ocr_text):
+                sticker["tags"] = self._append_unique(list(sticker.get("tags", [])), tag)
+            logger.info(f"[sticker_suite] vision ocr success: key={key[:8]} text={ocr_text[:40]}")
+        else:
+            sticker["ocr_text"] = ""
+            sticker["vision_error"] = "OCR 未识别到文字"
+            logger.info(f"[sticker_suite] vision ocr empty: key={key[:8]}")
+
+        shared_sticker = shared.setdefault("stickers", {}).get(key)
+        if isinstance(shared_sticker, dict):
+            shared_sticker["vision_engine"] = sticker.get("vision_engine", "")
+            shared_sticker["ocr_text"] = sticker.get("ocr_text", "")
+            if sticker.get("vision_error"):
+                shared_sticker["vision_error"] = sticker.get("vision_error")
+            else:
+                shared_sticker.pop("vision_error", None)
+            for context in sticker.get("contexts") or []:
+                shared_sticker["contexts"] = self._append_unique(list(shared_sticker.get("contexts", [])), context, self.MAX_CONTEXTS)
+            for tag in sticker.get("tags") or []:
+                shared_sticker["tags"] = self._append_unique(list(shared_sticker.get("tags", [])), tag)
+        return True
 
     def _record_stickers(self, group: dict[str, Any], shared: dict[str, Any], images: list[dict[str, Any]], text: str, sender_id: str, group_key: str) -> tuple[bool, list[tuple[str, dict[str, Any]]]]:
         """入库表情。返回 (是否有变更, 需要后续识图的 (key, sticker) 列表)。
@@ -626,6 +662,47 @@ class StickerSuitePlugin(Star):
         removed += self._merge_duplicate_stickers(shared_stickers)
         return removed
 
+    def _is_suite_command_text(self, text: str) -> bool:
+        normalized = text.strip()
+        if not normalized:
+            return False
+        if normalized.startswith("/"):
+            normalized = normalized[1:].lstrip()
+        command_patterns = [
+            r"^表情随机\s*$",
+            r"^表情最近\s*$",
+            r"^表情标记\s+(?:(?:\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s+)?\S+\s*$",
+            r"^表情删标\s+(?:\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s+\S+\s*$",
+            r"^表情清标\s+(?:\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$",
+            r"^表情自动标记(?:开|关|状态)\s*$",
+            r"^表情自动标记模式\s*(?:严格|关闭)\s*$",
+            r"^表情重标记(?:\s+(?:\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8}))?\s*$",
+            r"^表情重标记全部\s*$",
+            r"^表情识图(?:开|关|状态)\s*$",
+            r"^表情识图模式\s*(?:ocr|llm|auto)\s*$",
+            r"^表情识图冷却\s*\d+\s*$",
+            r"^表情重识图(?:\s+(?:\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8}))?\s*$",
+            r"^表情重识图全部\s*$",
+            r"^表情列表(?:\s+\d+)?\s*$",
+            r"^表情发送\s+(?:\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$",
+            r"^表情删除\s+(?:\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$",
+            r"^表情清理重复\s*$",
+            r"^表情同义词\s+\S+\s+\S+\s*$",
+            r"^表情删同义词\s+\S+\s+\S+\s*$",
+            r"^表情清同义词\s+\S+\s*$",
+            r"^表情同义词列表\s*$",
+            r"^表情标签\s*$",
+            r"^表情跨群(?:开|关)\s*$",
+            r"^表情跟随(?:开|关|测试开|测试关)\s*$",
+            r"^表情跟随冷却\s*\d+\s*$",
+            r"^表情测试(?:开|关)\s*$",
+            r"^表情(?:开|关|库状态|心情)\s*$",
+            r"^表情冷却\s*\d+\s*$",
+            r"^(?:表情)?探针开(?:\s+\d+)?\s*$",
+            r"^(?:表情)?探针(?:关|状态|详情)\s*$",
+        ]
+        return any(re.match(pattern, normalized) for pattern in command_patterns)
+
     def _should_ignore_text(self, event: AstrMessageEvent, text: str) -> bool:
         if not text:
             return True
@@ -636,7 +713,7 @@ class StickerSuitePlugin(Star):
             return True
         if normalized.startswith("/"):
             return True
-        if normalized.startswith("表情"):
+        if self._is_suite_command_text(normalized):
             return True
         return False
 
@@ -1322,7 +1399,7 @@ class StickerSuitePlugin(Star):
         group["vision_enabled"] = True
         self._save_data(data)
         yield event.plain_result(
-            "表情识图已开启。无上下文表情会触发识图（OCR/多模态 LLM），"
+            "表情识图已开启。无上下文表情会触发本地 OCR；"
             f"识图后该群进入 {group.get('vision_cooldown_minutes', VISION_COOLDOWN_MINUTES_DEFAULT)} 分钟冷却，"
             "冷却期内无上下文表情不入库。"
         )
@@ -1353,7 +1430,7 @@ class StickerSuitePlugin(Star):
         group = self._get_group(data, group_key)
         group["vision_mode"] = mode
         self._save_data(data)
-        yield event.plain_result(f"表情识图模式已设置为：{mode}")
+        yield event.plain_result(f"表情识图模式已设置为：{mode}。当前 auto 会优先使用本地 OCR；llm 模式暂未实现。")
 
     @filter.regex(r"^/?表情识图冷却\s*(\d+)\s*$")
     async def set_vision_cooldown(self, event: AstrMessageEvent):
@@ -1397,7 +1474,7 @@ class StickerSuitePlugin(Star):
         )
         lines = [
             f"识图开关：{'开启' if group.get('vision_enabled', False) else '关闭'}",
-            f"识图模式：{group.get('vision_mode', 'auto')}（ocr/llm/auto）",
+            f"识图模式：{group.get('vision_mode', 'auto')}（ocr/auto 使用本地 OCR；llm 暂未实现）",
             f"识图冷却：{minutes} 分钟",
             cooldown_line,
             f"已识图表情数：{recognized}",
@@ -1430,7 +1507,7 @@ class StickerSuitePlugin(Star):
             self._save_data(data)
             yield event.plain_result(f"表情 {match.group(1)} 重识图完成。")
         else:
-            yield event.plain_result("识图未生效（可能未配置 OCR/LLM 或调用失败）。请看日志。")
+            yield event.plain_result("识图未生效（可能未安装 rapidocr-onnxruntime、未配置本地缓存，或当前 llm 模式暂未实现）。请看日志。")
 
     @filter.regex(r"^/?表情重识图全部\s*$")
     async def revision_all_stickers(self, event: AstrMessageEvent):
@@ -1964,12 +2041,15 @@ class StickerSuitePlugin(Star):
         group = self._get_group(data, group_key)
         shared = self._get_shared(data)
         text = self._extract_message_text(event)
+        is_suite_command = self._is_suite_command_text(text)
         probe_was_enabled = bool(group.get("probe_enabled", False))
         if self._probe_enabled(group):
             self.probe.capture(event)
         elif probe_was_enabled and not group.get("probe_enabled", False):
             self._save_data(data)
         if self._is_self_event(event):
+            return
+        if is_suite_command:
             return
         images = self._extract_images(event)
         if images:
