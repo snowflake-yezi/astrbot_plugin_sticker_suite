@@ -684,6 +684,7 @@ class StickerSuitePlugin(Star):
             r"^表情重识图(?:\s+(?:\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8}))?\s*$",
             r"^表情重识图全部\s*$",
             r"^表情列表(?:\s+\d+)?\s*$",
+            r"^表情详情\s+(?:\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$",
             r"^表情发送\s+(?:\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$",
             r"^表情删除\s+(?:\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$",
             r"^表情清理重复\s*$",
@@ -1159,6 +1160,88 @@ class StickerSuitePlugin(Star):
             name = name[:17] + "..."
         return f"{index}. #{short_id} [{cached}/{identity}] {tags}｜见{seen}/发{sent}｜{name}"
 
+    def _format_timestamp(self, timestamp: Any) -> str:
+        try:
+            value = int(timestamp or 0)
+        except (TypeError, ValueError):
+            return "无"
+        if value <= 0:
+            return "无"
+        try:
+            return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(value))
+        except Exception:
+            return str(value)
+
+    def _clip_text(self, text: Any, limit: int = 80) -> str:
+        value = re.sub(r"\s+", " ", str(text or "")).strip()
+        if len(value) <= limit:
+            return value
+        return value[: limit - 3] + "..."
+
+    def _find_sticker_index(self, group: dict[str, Any], shared: dict[str, Any], key: str, sticker: dict[str, Any]) -> int | None:
+        for index, (candidate_key, candidate) in enumerate(self._indexed_stickers_with_shared(group, shared), 1):
+            if candidate_key == key or candidate is sticker:
+                return index
+        return None
+
+    def _sticker_detail_text(self, group: dict[str, Any], shared: dict[str, Any], key: str, sticker: dict[str, Any]) -> str:
+        self._ensure_sticker_metadata(key, sticker)
+        short_id = self._short_id(key, sticker)
+        index = self._find_sticker_index(group, shared, key, sticker)
+        local_stickers = group.get("stickers") or {}
+        source_scope = "当前群" if sticker is local_stickers.get(key) or key in local_stickers else "共享池"
+        local_path = str(sticker.get("local_path") or "")
+        cached = "可发" if local_path and Path(local_path).exists() else "未缓存"
+        source = sticker.get("source") or {}
+        identity = "强" if self._source_has_identity(source) or sticker.get("content_hash") else "弱"
+        tags = "、".join(str(item) for item in sticker.get("tags") or [] if str(item).strip()) or "无标签"
+        contexts = [self._clip_text(item) for item in sticker.get("contexts") or [] if self._clip_text(item)]
+        ocr_text = self._clip_text(sticker.get("ocr_text"), 120) or "无"
+        vision_engine = str(sticker.get("vision_engine") or "无")
+        seen = int(sticker.get("seen_count", 0) or 0)
+        sent = int(sticker.get("send_count", 0) or 0)
+        source_items = []
+        for name in ["summary", "file", "file_id", "md5", "path", "url"]:
+            value = self._clip_text(source.get(name), 80)
+            if value:
+                source_items.append(f"{name}={value}")
+        source_text = "；".join(source_items[:4]) or "无"
+        content_hash = str(sticker.get("content_hash") or "")
+        hash_text = content_hash[:16] + "..." if len(content_hash) > 16 else (content_hash or "无")
+        group_ids = [str(item) for item in sticker.get("group_ids") or [] if str(item).strip()]
+        sender_count = len([item for item in sticker.get("sender_ids") or [] if str(item).strip()])
+
+        lines = [f"表情详情 #{short_id}"]
+        if index is not None:
+            lines.append(f"编号：{index}")
+        lines.extend(
+            [
+                f"来源：{source_scope}",
+                f"状态：{cached}/{identity}",
+                f"标签：{tags}",
+                f"OCR：{ocr_text}",
+                f"视觉引擎：{vision_engine}",
+                f"统计：见{seen}/发{sent}",
+                f"入库时间：{self._format_timestamp(sticker.get('created_at'))}",
+                f"最近见到：{self._format_timestamp(sticker.get('last_seen_at'))}",
+                f"来源摘要：{source_text}",
+                f"内容哈希：{hash_text}",
+            ]
+        )
+        if group_ids:
+            lines.append(f"关联群数：{len(group_ids)}")
+        if sender_count:
+            lines.append(f"记录发送者数：{sender_count}")
+        if contexts:
+            lines.append("上下文：")
+            for context in contexts[:5]:
+                lines.append(f"- {context}")
+            if len(contexts) > 5:
+                lines.append(f"- ... 还有 {len(contexts) - 5} 条")
+        else:
+            lines.append("上下文：无")
+        return "\n".join(lines)
+
     def _delete_shared_group_ref(self, shared: dict[str, Any], key: str, group_key: str) -> None:
         shared_stickers = shared.get("stickers") or {}
         shared_sticker = shared_stickers.get(key)
@@ -1555,6 +1638,26 @@ class StickerSuitePlugin(Star):
         self._save_data(data)
         lines.append("用法：表情发送 编号/#ID｜表情标记 编号/#ID 标签｜表情删标 编号/#ID 标签｜表情清标 编号/#ID｜表情删除 编号/#ID")
         yield event.plain_result("\n".join(lines))
+
+    @filter.regex(r"^/?表情详情\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
+    async def sticker_detail(self, event: AstrMessageEvent):
+        group_key = self._get_group_key(event)
+        if group_key is None:
+            return
+        match = re.match(r"^/?表情详情\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$", event.get_message_str().strip())
+        if not match:
+            return
+        data = self._load_data()
+        group = self._get_group(data, group_key)
+        shared = self._get_shared(data)
+        selected = self._sticker_by_ref(group, match.group(1), shared)
+        if selected is None:
+            yield event.plain_result("没有找到这个编号或 ID。请先用 表情列表 查看。")
+            return
+        key, sticker = selected
+        detail_text = self._sticker_detail_text(group, shared, key, sticker)
+        self._save_data(data)
+        yield event.plain_result(detail_text)
 
     @filter.regex(r"^/?表情发送\s+(\d+|#[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8})\s*$")
     async def send_indexed_sticker(self, event: AstrMessageEvent):
