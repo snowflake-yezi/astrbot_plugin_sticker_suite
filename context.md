@@ -22,6 +22,7 @@
 astrbot_plugin_sticker_suite/
   __init__.py        # 导出 StickerSuitePlugin
   main.py            # AstrBot 插件入口；命令、钩子、主流程仍集中在这里
+  formatting.py      # 帮助/列表/详情等纯文本格式化 helper（第一阶段拆分）
   constants.py       # 图片字段、默认冷却、内置情绪词、语义词组、OCR 配置
   image_extract.py   # 从 AstrBot/NapCat 消息结构中提取图片/表情字段
   probe.py           # 内置表情探针；只做诊断，不参与入库/发送/标记
@@ -426,8 +427,8 @@ TypeError: StickerMemoryPlugin.follow_reply_sticker() missing 1 required positio
 优先级较高：
 
 1. 继续工程化拆分 `main.py`。
-   - 建议先拆纯逻辑，保留 AstrBot 装饰器和命令注册在 `main.py`。
-   - 候选模块：`storage.py`、`tagging.py`、`retrieval.py`、`selection.py`、`commands/`。
+   - 已完成第一阶段：帮助文案、列表行、详情文本等纯格式化逻辑已拆到 `formatting.py`。
+   - 下一步建议继续拆 `tagging.py`、`retrieval.py`、`storage.py`，AstrBot 装饰器和命令注册仍留在 `main.py`。
 2. 增加选择策略。
    - 例如稳定、轮换、前 N 随机、随机度低/中/高。
 3. 完善 OCR / 视觉能力。
