@@ -542,6 +542,7 @@ astrbot_plugin_sticker_suite/
   __init__.py        # 暴露 StickerSuitePlugin
   main.py            # AstrBot 装饰器注册、命令编排、数据读写
   formatting.py      # 帮助文案、列表行、详情文本等纯格式化 helper
+  tagging.py         # 标签推断、规范化、同义词映射、自动标记等纯逻辑
   constants.py       # 共享常量：图片字段名、强身份字段、情绪词、默认冷却等
   image_extract.py   # 消息组件/raw message 递归识别为可入库 image 记录
   probe.py           # 内置 [sticker_probe] 诊断
@@ -553,7 +554,7 @@ astrbot_plugin_sticker_suite/
 ```
 
 - 类名是 `StickerSuitePlugin`，日志前缀是 `[sticker_suite]`（探针日志仍是 `[sticker_probe]`）。
-- 第一阶段拆分已开始：帮助文案、列表行、详情文本等纯格式化逻辑已移到 `formatting.py`，AstrBot decorators 和命令注册仍保留在 `main.py`。
+- 工程化拆分进行中：格式化逻辑已移到 `formatting.py`，标签逻辑已移到 `tagging.py`；AstrBot decorators 和命令注册仍保留在 `main.py`。
 - 回复跟随依赖 AstrBot `filter.on_decorating_result`；若运行环境没有该钩子，启动日志会打印一条 `filter.on_decorating_result not available` 警告。
 
 ## 已知未完成功能

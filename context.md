@@ -1,6 +1,6 @@
 # sticker_suite 项目上下文（精简版）
 
-最后整理：2026-06-10
+最后整理：2026-06-18
 
 ## 1. 项目定位
 
@@ -23,6 +23,7 @@ astrbot_plugin_sticker_suite/
   __init__.py        # 导出 StickerSuitePlugin
   main.py            # AstrBot 插件入口；命令、钩子、主流程仍集中在这里
   formatting.py      # 帮助/列表/详情等纯文本格式化 helper（第一阶段拆分）
+  tagging.py         # 标签推断、规范化、同义词映射、自动标记等纯逻辑（第二阶段拆分）
   constants.py       # 图片字段、默认冷却、内置情绪词、语义词组、OCR 配置
   image_extract.py   # 从 AstrBot/NapCat 消息结构中提取图片/表情字段
   probe.py           # 内置表情探针；只做诊断，不参与入库/发送/标记
@@ -428,7 +429,8 @@ TypeError: StickerMemoryPlugin.follow_reply_sticker() missing 1 required positio
 
 1. 继续工程化拆分 `main.py`。
    - 已完成第一阶段：帮助文案、列表行、详情文本等纯格式化逻辑已拆到 `formatting.py`。
-   - 下一步建议继续拆 `tagging.py`、`retrieval.py`、`storage.py`，AstrBot 装饰器和命令注册仍留在 `main.py`。
+   - 已完成第二阶段：标签推断、规范化、同义词映射、自动标记、重标记等纯逻辑已拆到 `tagging.py`。
+   - 下一步建议继续拆 `retrieval.py`、`storage.py`，AstrBot 装饰器和命令注册仍留在 `main.py`。
 2. 增加选择策略。
    - 例如稳定、轮换、前 N 随机、随机度低/中/高。
 3. 完善 OCR / 视觉能力。
@@ -454,4 +456,4 @@ python -m py_compile <改动的 .py 文件>
 
 ## 14. 当前一句话总结
 
-这是一个 AstrBot 表情记忆与复用插件：它会学习群里的表情包，用本地规则和可选 OCR 自动打标签，再根据用户消息或机器人回复检索最合适的一张表情发送；目前核心功能已闭环，下一步主要是继续拆分 `main.py`、补充详情命令和选择策略。
+这是一个 AstrBot 表情记忆与复用插件：它会学习群里的表情包，用本地规则和可选 OCR 自动打标签，再根据用户消息或机器人回复检索最合适的一张表情发送；核心功能已闭环，格式化（formatting.py）和标签逻辑（tagging.py）已完成拆分，下一步拆 `retrieval.py` / `storage.py`，补充选择策略和 LLM 识图兜底。
