@@ -160,7 +160,7 @@ def remember_recent_text(
     if not normalized or normalized.startswith("/") or normalized.startswith("表情"):
         return
     now_ts = now()
-    recent = [item for item in list(group.get("recent_texts", [])) if now_ts - int(item.get("created_at", 0) or 0) <= 120]
+    recent = [item for item in list(group.get("recent_texts", [])) if now_ts - int(item.get("created_at", 0) or 0) <= 30]
     recent.append({"sender_id": str(sender_id), "text": normalized, "created_at": now_ts})
     group["recent_texts"] = recent[-10:]
 
@@ -178,7 +178,7 @@ def previous_text_for_auto_tag(
     for item in reversed(list(group.get("recent_texts", []))):
         if str(item.get("sender_id") or "") != str(sender_id):
             continue
-        if now_ts - int(item.get("created_at", 0) or 0) > 60:
+        if now_ts - int(item.get("created_at", 0) or 0) > 15:
             continue
         text = str(item.get("text") or "").strip()
         if text:
